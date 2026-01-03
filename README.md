@@ -17,7 +17,12 @@ Executing...
 ## Features
 
 - **Natural language commands** - Prefix with `#` to use AI
-- **Context aware** - Knows your current directory, files, and git branch
+- **Rich context awareness** - The LLM knows:
+  - Current working directory and files
+  - Git branch and uncommitted changes
+  - OS/platform (Linux distro, macOS, etc.)
+  - Project type (Node.js, Python, Rust, Go, Ruby, etc.)
+  - Your recent command history
 - **Edit mode** - Press `e` to edit the command before running
 - **Safety warnings** - Alerts on dangerous commands like `rm -rf`
 - **Command history** - Saves the actual command, not the prompt

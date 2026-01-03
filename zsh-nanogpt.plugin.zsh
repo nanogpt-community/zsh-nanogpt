@@ -91,6 +91,47 @@ _nanogpt_git_context() {
     fi
 }
 
+# Get OS/platform info
+_nanogpt_os_context() {
+    local os_name=$(uname -s)
+    local os_info="$os_name"
+    
+    # Add more detail for Linux distros
+    if [[ "$os_name" == "Linux" ]] && [[ -f /etc/os-release ]]; then
+        local distro=$(grep -oP '^ID=\K.*' /etc/os-release 2>/dev/null | tr -d '"')
+        [[ -n "$distro" ]] && os_info="$os_name ($distro)"
+    fi
+    
+    echo "$os_info"
+}
+
+# Detect project type from files in current directory
+_nanogpt_project_context() {
+    local project_types=()
+    
+    [[ -f "package.json" ]] && project_types+=("Node.js")
+    [[ -f "Cargo.toml" ]] && project_types+=("Rust")
+    [[ -f "go.mod" ]] && project_types+=("Go")
+    [[ -f "requirements.txt" ]] || [[ -f "pyproject.toml" ]] || [[ -f "setup.py" ]] && project_types+=("Python")
+    [[ -f "Gemfile" ]] && project_types+=("Ruby")
+    [[ -f "composer.json" ]] && project_types+=("PHP")
+    [[ -f "pom.xml" ]] || [[ -f "build.gradle" ]] && project_types+=("Java")
+    [[ -f "Makefile" ]] && project_types+=("Make")
+    [[ -f "CMakeLists.txt" ]] && project_types+=("CMake")
+    [[ -f "docker-compose.yml" ]] || [[ -f "docker-compose.yaml" ]] && project_types+=("Docker Compose")
+    [[ -f "Dockerfile" ]] && project_types+=("Docker")
+    
+    if [[ ${#project_types[@]} -gt 0 ]]; then
+        echo "${(j:, :)project_types}"
+    fi
+}
+
+# Get recent command history
+_nanogpt_history_context() {
+    # Get last 5 commands (excluding # prompts)
+    fc -l -n -10 2>/dev/null | grep -v '^#' | tail -5 | tr '\n' '; ' | sed 's/; $//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*; /; /g'
+}
+
 # Call the NanoGPT API
 _nanogpt_call() {
     local prompt="$1"
@@ -104,11 +145,16 @@ _nanogpt_call() {
     local cwd="$(pwd)"
     local files="$(ls -1 2>/dev/null | head -50 | tr '\n' ', ' | sed 's/,$//')"
     local git_info="$(_nanogpt_git_context)"
+    local os_info="$(_nanogpt_os_context)"
+    local project_info="$(_nanogpt_project_context)"
+    local history_info="$(_nanogpt_history_context)"
     
     local system_prompt="You are a shell command generator. Output ONLY the shell command(s), nothing else - no explanations, no markdown, no code blocks. Use && for multiple commands. IMPORTANT: You will be given the current directory and list of files. Use the EXACT file and folder names provided - do not guess or modify them. If a file is named 'zsh-nanogpt' use exactly that, not 'zsh/nanogpt'."
     
-    local context_prompt="Current directory: $cwd | Files here: $files"
+    local context_prompt="OS: $os_info | Current directory: $cwd | Files here: $files"
+    [[ -n "$project_info" ]] && context_prompt="$context_prompt | Project type: $project_info"
     [[ -n "$git_info" ]] && context_prompt="$context_prompt | $git_info"
+    [[ -n "$history_info" ]] && context_prompt="$context_prompt | Recent commands: $history_info"
     context_prompt="$context_prompt | Request: $prompt"
     
     # Escape special characters for JSON
