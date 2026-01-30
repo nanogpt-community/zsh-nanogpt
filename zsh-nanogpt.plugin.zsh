@@ -190,13 +190,117 @@ _nanogpt_call() {
     fi
     
     # Extract content from response
-    # Try jq first, fall back to grep/sed
-    local content
+    # Prefer jq, then a Python fallback that tolerates malformed JSON with raw newlines.
+    local content=""
+    local parsed=0
     if command -v jq &>/dev/null; then
-        content=$(echo "$response" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
-    else
-        # Basic extraction without jq
-        content=$(echo "$response" | grep -o '"content"[[:space:]]*:[[:space:]]*"[^"]*"' | tail -1 | sed 's/.*"content"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+        content=$(printf '%s' "$response" | jq -r '.choices[0].message.content // empty' 2>/dev/null)
+        local jq_status=${pipestatus[2]}
+        if [[ $jq_status -eq 0 ]]; then
+            parsed=1
+        fi
+    fi
+    if [[ $parsed -eq 0 ]] && command -v python3 &>/dev/null; then
+        content=$(printf '%s' "$response" | python3 - <<'PY'
+import json
+import sys
+
+text = sys.stdin.read()
+
+def emit(value):
+    if value is None:
+        return False
+    sys.stdout.write(value)
+    return True
+
+def try_json(payload):
+    try:
+        data = json.loads(payload)
+    except Exception:
+        return False
+    try:
+        content = data["choices"][0]["message"].get("content")
+    except Exception:
+        return False
+    return emit(content)
+
+if try_json(text):
+    sys.exit(0)
+
+# Manual extraction for responses with invalid JSON (e.g., raw newlines in strings).
+key = '"content"'
+start = text.find(key)
+if start == -1:
+    sys.exit(1)
+
+i = start + len(key)
+while i < len(text) and text[i] != ':':
+    i += 1
+if i >= len(text):
+    sys.exit(1)
+i += 1
+while i < len(text) and text[i].isspace():
+    i += 1
+if i >= len(text) or text[i] != '"':
+    sys.exit(1)
+i += 1
+
+out = []
+while i < len(text):
+    ch = text[i]
+    if ch == '"':
+        sys.stdout.write("".join(out))
+        sys.exit(0)
+    if ch == '\\':
+        i += 1
+        if i >= len(text):
+            break
+        esc = text[i]
+        if esc == "n":
+            out.append("\n")
+        elif esc == "t":
+            out.append("\t")
+        elif esc == "r":
+            out.append("\r")
+        elif esc == '"':
+            out.append('"')
+        elif esc == "\\":
+            out.append("\\")
+        elif esc == "/":
+            out.append("/")
+        elif esc == "b":
+            out.append("\b")
+        elif esc == "f":
+            out.append("\f")
+        elif esc == "u":
+            if i + 4 < len(text):
+                hexval = text[i + 1 : i + 5]
+                try:
+                    out.append(chr(int(hexval, 16)))
+                    i += 4
+                except Exception:
+                    out.append("\\u" + hexval)
+                    i += 4
+            else:
+                out.append("\\u")
+        else:
+            out.append(esc)
+    else:
+        out.append(ch)
+    i += 1
+
+sys.exit(1)
+PY
+)
+        local py_status=$?
+        if [[ $py_status -eq 0 ]]; then
+            parsed=1
+        fi
+    fi
+    if [[ $parsed -eq 0 ]]; then
+        # Basic extraction without jq/python (best effort).
+        content=$(printf '%s' "$response" | grep -o '"content"[[:space:]]*:[[:space:]]*"[^"]*"' | tail -1 | sed 's/.*"content"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+        [[ -n "$content" ]] && parsed=1
     fi
     
     if [[ -z "$content" ]]; then
